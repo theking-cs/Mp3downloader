@@ -26,7 +26,7 @@ def get_api():
             with open(CONFIG_FILE, "w") as f:
                 f.write('# -*- coding: utf-8 -*-\n')
                 f.write('YOUTUBE_API_KEY = "TU_API_KEY_AQUI"\n')
-        except:
+        except Exception:
             pass
         return None
 
@@ -36,7 +36,7 @@ def get_api():
         cfg = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cfg)
         return getattr(cfg, "YOUTUBE_API_KEY", None)
-    except: 
+    except Exception: 
         return None
 
 def manage_history(mode, q=None):
@@ -46,7 +46,7 @@ def manage_history(mode, q=None):
                 os.makedirs(os.path.dirname(HISTORY_FILE))
             with open(HISTORY_FILE, "a") as f: 
                 f.write(str(q) + "\n")
-        except: 
+        except Exception: 
             pass
     else:
         if not os.path.exists(HISTORY_FILE): 
@@ -55,7 +55,7 @@ def manage_history(mode, q=None):
             with open(HISTORY_FILE, "r") as f:
                 lines = f.readlines()
                 return list(dict.fromkeys([x.strip() for x in lines if x.strip()]))[::-1][:20]
-        except: 
+        except Exception: 
             return []
 
 class DownloadsScreen(Screen):
@@ -83,12 +83,12 @@ class DownloadsScreen(Screen):
         # Timer para restaurar el texto del botón de forma compatible con OpenBh
         self.reset_timer = eTimer()
         try: self.reset_timer.timeout.connect(self.reset_button_text)
-        except: self.reset_timer.callback.append(self.reset_button_text)
+        except Exception: self.reset_timer.callback.append(self.reset_button_text)
 
         # Timer inicial estable para cargar la lista al abrir la pantalla
         self.init_timer = eTimer()
         try: self.init_timer.timeout.connect(self.refresh_list)
-        except: self.init_timer.callback.append(self.refresh_list)
+        except Exception: self.init_timer.callback.append(self.refresh_list)
         self.init_timer.start(100, True)
 
     def refresh_list(self):
@@ -145,7 +145,7 @@ class ResultsScreenPro(Screen):
         
         self.timer = eTimer()
         try: self.timer_conn = self.timer.timeout.connect(self.show_data)
-        except: self.timer.callback.append(self.show_data)
+        except Exception: self.timer.callback.append(self.show_data)
         
         self["list"].onSelectionChanged.append(self.start_timer)
 
@@ -162,7 +162,7 @@ class ResultsScreenPro(Screen):
             r = requests.get(res[2], timeout=3)
             with open(path, "wb") as f: f.write(r.content)
             self["preview"].instance.setPixmap(LoadPixmap(path=path))
-        except: pass
+        except Exception: pass
 
     def go_ok(self):
         cur = self["list"].getCurrent()
@@ -190,7 +190,7 @@ class ResultsScreenPro(Screen):
                     if stream_url:
                         ref = eServiceReference(4097, 0, stream_url)
                         self.session.nav.playService(ref)
-                except: 
+                except Exception: 
                     pass
 
     def go_exit(self):
@@ -207,7 +207,7 @@ class MP3Manager(Screen):
         self.api = get_api()
         self.init_timer = eTimer()
         try: self.init_timer.timeout.connect(self.open_main_menu)
-        except: self.init_timer.callback.append(self.open_main_menu)
+        except Exception: self.init_timer.callback.append(self.open_main_menu)
         self.init_timer.start(200, True)
 
     def open_main_menu(self):
@@ -251,7 +251,7 @@ class MP3Manager(Screen):
                 self.session.openWithCallback(self.return_to_menu, ResultsScreenPro, results)
             else:
                 self.session.openWithCallback(self.return_to_menu, MessageBox, "Sin resultados", MessageBox.TYPE_INFO)
-        except:
+        except Exception:
             self.session.openWithCallback(self.return_to_menu, MessageBox, "Error de red", MessageBox.TYPE_ERROR)
 
     def return_to_menu(self, *args):
@@ -262,4 +262,15 @@ def main(session, **kwargs):
     session.open(MP3Manager)
 
 def Plugins(**kwargs):
-    return [PluginDescriptor(name="MP3 Downloader PRO", where=PluginDescriptor.WHERE_PLUGINMENU, fnc=main)]
+    # Detectamos la ruta del plugin dinámicamente para cargar el icono de forma correcta
+    icon_path = os.path.join(os.path.dirname(__file__), "plugin.png")
+    if not os.path.exists(icon_path):
+        icon_path = None # Si no existe el archivo físico, evita crashear devolviendo None
+        
+    return [PluginDescriptor(
+        name="MP3 Downloader PRO", 
+        description="Descarga música MP3 desde YouTube",
+        where=PluginDescriptor.WHERE_PLUGINMENU, 
+        icon=icon_path, 
+        fnc=main
+    )]
