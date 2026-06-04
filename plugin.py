@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-import os, requests, subprocess
+import os
+import subprocess
+import html  # Para limpiar los caracteres HTML corruptos en títulos de YouTube
 from Plugins.Plugin import PluginDescriptor
 from Screens.Screen import Screen
 from Screens.ChoiceBox import ChoiceBox
@@ -11,6 +13,7 @@ from Components.Pixmap import Pixmap
 from Components.MenuList import MenuList
 from enigma import eServiceReference, eTimer
 from Tools.LoadPixmap import LoadPixmap
+from twisted.web.client import downloadPage  # Descargas asíncronas nativas de Enigma2 (Evita pantallas azules)
 
 # Rutas
 DOWNLOAD_DIR = "/media/hdd/Mp3"
@@ -58,6 +61,7 @@ def manage_history(mode, q=None):
         except Exception: 
             return []
 
+
 class DownloadsScreen(Screen):
     skin = """
     <screen position="center,center" size="900,500" title="MP3 Downloader PRO - Mis Descargas">
@@ -80,12 +84,10 @@ class DownloadsScreen(Screen):
             "cancel": self.close
         }, -1)
         
-        # Timer para restaurar el texto del botón de forma compatible con OpenBh
         self.reset_timer = eTimer()
         try: self.reset_timer.timeout.connect(self.reset_button_text)
         except Exception: self.reset_timer.callback.append(self.reset_button_text)
 
-        # Timer inicial estable para cargar la lista al abrir la pantalla
         self.init_timer = eTimer()
         try: self.init_timer.timeout.connect(self.refresh_list)
         except Exception: self.init_timer.callback.append(self.refresh_list)
@@ -104,7 +106,7 @@ class DownloadsScreen(Screen):
             self["list"].setList([(f, f) for f in files])
             
         self["key_red"].setText("● Lista Actualizada")
-        self.reset_timer.start(1200, True) # Ejecución segura en OpenBh
+        self.reset_timer.start(1200, True)
 
     def reset_button_text(self):
         self["key_red"].setText("● [ROJO] Refrescar Lista")
@@ -148,21 +150,34 @@ class ResultsScreenPro(Screen):
         except Exception: self.timer.callback.append(self.show_data)
         
         self["list"].onSelectionChanged.append(self.start_timer)
+        self.start_timer()
 
     def start_timer(self):
-        self.timer.start(400, True)
+        self.timer.start(300, True)
 
     def show_data(self):
         cur = self["list"].getCurrent()
         if not cur or not self.results: return
         res = self.results[cur[1]]
         self["title"].setText(res[0])
-        path = "/tmp/v.jpg"
+        
+        # Uso de downloadPage de Twisted para descargar asíncronamente (Evita cuelgues)
+        path = b"/tmp/v.jpg"
         try:
-            r = requests.get(res[2], timeout=3)
-            with open(path, "wb") as f: f.write(r.content)
-            self["preview"].instance.setPixmap(LoadPixmap(path=path))
-        except Exception: pass
+            url_bytes = res[2].encode('utf-8') if isinstance(res[2], str) else res[2]
+            downloadPage(url_bytes, path).addCallback(self.image_downloaded).addErrback(self.image_error)
+        except Exception:
+            pass
+
+    def image_downloaded(self, result):
+        try:
+            if os.path.exists("/tmp/v.jpg") and os.path.getsize("/tmp/v.jpg") > 0:
+                self["preview"].instance.setPixmap(LoadPixmap(path="/tmp/v.jpg"))
+        except Exception:
+            pass
+
+    def image_error(self, error):
+        pass
 
     def go_ok(self):
         cur = self["list"].getCurrent()
@@ -178,11 +193,11 @@ class ResultsScreenPro(Screen):
             
             if res[1] == "d":
                 if not os.path.exists(DOWNLOAD_DIR): os.makedirs(DOWNLOAD_DIR)
-                cmd = "yt-dlp -f 'ba[ext=m4a]/bestaudio' -o '%s/%%(title)s.m4a' '%s' &" % (DOWNLOAD_DIR, url)
+                cmd = "yt-dlp -f 'ba[ext=m4a]/bestaudio' --no-playlist -o '%s/%%(title)s.%%(ext)s' '%s' &" % (DOWNLOAD_DIR, url)
                 os.system(cmd)
                 self.session.open(MessageBox, "Descarga iniciada en segundo plano", MessageBox.TYPE_INFO, timeout=5)
             else:
-                fmt = "worstaudio" if res[1] == "a" else "best"
+                fmt = "ba" if res[1] == "a" else "18/22/best"
                 try:
                     cmd = "yt-dlp -g -f %s --no-playlist '%s'" % (fmt, url)
                     stream_url = subprocess.check_output(cmd, shell=True).decode().strip()
@@ -195,6 +210,9 @@ class ResultsScreenPro(Screen):
 
     def go_exit(self):
         self.timer.stop()
+        if os.path.exists("/tmp/v.jpg"):
+            try: os.remove("/tmp/v.jpg")
+            except Exception: pass
         self.close()
 
 
@@ -241,11 +259,19 @@ class MP3Manager(Screen):
             return
 
         try:
+            import requests
             url = "https://www.googleapis.com/youtube/v3/search"
             p = {"part": "snippet", "q": query, "type": "video", "maxResults": 15, "key": self.api}
             resp = requests.get(url, params=p, timeout=10)
             data = resp.json()
-            results = [(i["snippet"]["title"], i["id"]["videoId"], i["snippet"]["thumbnails"]["high"]["url"]) for i in data.get("items", [])]
+            
+            results = []
+            for i in data.get("items", []):
+                # Deshacer las entidades HTML para evitar títulos corruptos (&amp;, &#39;)
+                clean_title = html.unescape(i["snippet"]["title"])
+                v_id = i["id"]["videoId"]
+                thumb = i["snippet"]["thumbnails"]["high"]["url"]
+                results.append((clean_title, v_id, thumb))
             
             if results:
                 self.session.openWithCallback(self.return_to_menu, ResultsScreenPro, results)
@@ -262,10 +288,9 @@ def main(session, **kwargs):
     session.open(MP3Manager)
 
 def Plugins(**kwargs):
-    # Detectamos la ruta del plugin dinámicamente para cargar el icono de forma correcta
     icon_path = os.path.join(os.path.dirname(__file__), "plugin.png")
     if not os.path.exists(icon_path):
-        icon_path = None # Si no existe el archivo físico, evita crashear devolviendo None
+        icon_path = None
         
     return [PluginDescriptor(
         name="MP3 Downloader PRO", 
@@ -273,4 +298,4 @@ def Plugins(**kwargs):
         where=PluginDescriptor.WHERE_PLUGINMENU, 
         icon=icon_path, 
         fnc=main
-    )]
+    )] )]
